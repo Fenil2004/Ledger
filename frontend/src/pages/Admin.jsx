@@ -1,6 +1,7 @@
 import React, { useState, useMemo } from 'react';
 import { base44 } from '@/api/base44Client';
 import { useQuery } from '@tanstack/react-query';
+import { useAuth } from '@/context/AuthContext';
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
@@ -14,6 +15,7 @@ import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContaine
 const COLORS = ['#6366f1', '#22c55e', '#f59e0b', '#ef4444', '#8b5cf6', '#06b6d4', '#ec4899', '#14b8a6'];
 
 export default function AdminDashboard() {
+  const { user } = useAuth();
   const [userFilter, setUserFilter] = useState('all');
   const [searchTerm, setSearchTerm] = useState('');
 
@@ -102,6 +104,21 @@ export default function AdminDashboard() {
     totalParties: parties.length,
     todayTransactions: transactions.filter(t => t.date === format(new Date(), 'yyyy-MM-dd')).length
   };
+
+  // Redirect if not admin
+  if (user?.role !== 'admin') {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-slate-900 via-slate-800 to-indigo-900">
+        <Card className="w-96 bg-white/10 backdrop-blur-lg border-white/20">
+          <CardContent className="pt-6 text-center">
+            <Shield className="w-16 h-16 mx-auto mb-4 text-slate-400" />
+            <h2 className="text-xl font-semibold text-white mb-2">Admin Access Required</h2>
+            <p className="text-slate-300">You need administrator privileges to access this page.</p>
+          </CardContent>
+        </Card>
+      </div>
+    );
+  }
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-slate-900 via-slate-800 to-indigo-900">

@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Link, useLocation } from 'react-router-dom';
+import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { 
   LayoutDashboard, 
   ArrowRightLeft, 
@@ -9,22 +9,37 @@ import {
   Menu, 
   X,
   PlusCircle,
-  LogOut
+  LogOut,
+  User,
+  Bell
 } from 'lucide-react';
 import { createPageUrl } from '@/utils';
 import { Button } from "@/components/ui/button";
 import { Sheet, SheetContent, SheetTrigger } from "@/components/ui/sheet";
 import { base44 } from "@/api/base44Client";
+import { useAuth } from "@/context/AuthContext";
+import NotificationBell from "@/components/NotificationBell";
+
 
 export default function Layout({ children }) {
   const location = useLocation();
+  const navigate = useNavigate();
+  const { user, logout } = useAuth();
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
+
+  const handleLogout = () => {
+    logout();
+    navigate('/login');
+  };
 
   const menuItems = [
     { name: 'Dashboard', icon: LayoutDashboard, path: '/' },
     { name: 'Parties', icon: Users, path: '/Parties' },
     { name: 'Reports', icon: FileBarChart, path: '/Reports' },
-    { name: 'Admin', icon: ShieldCheck, path: '/Admin' },
+    ...(user?.role === 'admin' ? [
+      { name: 'Notifications', icon: Bell, path: '/Notifications' },
+      { name: 'Admin', icon: ShieldCheck, path: '/Admin' }
+    ] : []),
   ];
 
   const isActive = (path) => {
@@ -133,9 +148,38 @@ export default function Layout({ children }) {
         </div>
         
         <div className="flex items-center gap-3">
-           <div className="w-8 h-8 rounded-full bg-indigo-100 flex items-center justify-center text-indigo-700 font-bold text-xs border border-indigo-200">
-             MK
-           </div>
+          {/* Notification Bell (Admin only) */}
+          <NotificationBell />
+
+          {/* User Profile */}
+          <div className="flex items-center gap-3">
+            {user?.profileImage ? (
+              <img 
+                src={user.profileImage} 
+                alt={user.name} 
+                className="w-8 h-8 rounded-full border-2 border-indigo-200"
+              />
+            ) : (
+              <div className="w-8 h-8 rounded-full bg-indigo-100 flex items-center justify-center text-indigo-700 font-bold text-xs border border-indigo-200">
+                {user?.name?.charAt(0).toUpperCase() || 'U'}
+              </div>
+            )}
+            <div className="hidden sm:block">
+              <p className="text-sm font-medium text-slate-900">{user?.name || 'User'}</p>
+              <p className="text-xs text-slate-500">{user?.email}</p>
+            </div>
+          </div>
+
+          {/* Logout Button */}
+          <Button
+            variant="ghost"
+            size="icon"
+            onClick={handleLogout}
+            className="text-gray-500 hover:text-red-600 hover:bg-red-50"
+            title="Logout"
+          >
+            <LogOut className="w-5 h-5" />
+          </Button>
         </div>
       </header>
 

@@ -5,9 +5,9 @@ import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Save, Calculator, Package } from "lucide-react";
+import { Save, Calculator } from "lucide-react";
 
-const BS_ITEMS = [
+const ITEM_NAMES = [
   "Shoes HNY", "Shoes Black", "Sheet HNY", "Sheet Black", 
   "Mixed Lot", "Premium Grade", "Standard Grade", "Reject"
 ];
@@ -19,45 +19,48 @@ export default function SellingForm({ transaction, parties, onSubmit, isLoading 
     phone: '',
     party_name: '',
     item_name: '',
-    hny_rate: '',
-    hny_weight: '',
-    black_rate: '',
-    black_weight: '',
-    shoes_hny: '',
-    sheet_hny: '',
-    shoes_black: '',
-    sheet_black: '',
-    total_weight: '',
-    total_payment: '',
+    count: '',
+    weight_per_item: '',
+    rate_per_item: '',
+    total_weight: 0,
+    total_payment: 0,
     notes: ''
   });
 
   useEffect(() => {
     if (transaction) {
+      const sellItem = transaction.sell_items?.[0];
       setFormData({
-        ...formData,
-        ...transaction,
-        date: transaction.date || new Date().toISOString().split('T')[0]
+        transaction_type: 'selling',
+        date: transaction.date || new Date().toISOString().split('T')[0],
+        phone: transaction.phone || '',
+        party_name: transaction.party_name || '',
+        item_name: sellItem?.item_name || '',
+        count: sellItem?.count || '',
+        weight_per_item: sellItem?.weight_per_item || '',
+        rate_per_item: sellItem?.rate_per_item || '',
+        total_weight: transaction.total_weight || 0,
+        total_payment: transaction.total_payment || 0,
+        notes: transaction.notes || ''
       });
     }
   }, [transaction]);
 
-  // Auto-calculate totals
+  // Auto-calculate totals when count, weight_per_item, or rate_per_item changes
   useEffect(() => {
-    const hnyWeight = parseFloat(formData.hny_weight) || 0;
-    const blackWeight = parseFloat(formData.black_weight) || 0;
-    const hnyRate = parseFloat(formData.hny_rate) || 0;
-    const blackRate = parseFloat(formData.black_rate) || 0;
+    const count = parseFloat(formData.count) || 0;
+    const weightPerItem = parseFloat(formData.weight_per_item) || 0;
+    const ratePerItem = parseFloat(formData.rate_per_item) || 0;
 
-    const totalWeight = hnyWeight + blackWeight;
-    const totalPayment = (hnyWeight * hnyRate) + (blackWeight * blackRate);
+    const totalWeight = count * weightPerItem;
+    const totalPayment = count * ratePerItem;
 
     setFormData(prev => ({
       ...prev,
       total_weight: totalWeight,
       total_payment: totalPayment
     }));
-  }, [formData.hny_weight, formData.black_weight, formData.hny_rate, formData.black_rate]);
+  }, [formData.count, formData.weight_per_item, formData.rate_per_item]);
 
   const handlePartySelect = (partyName) => {
     const party = parties.find(p => p.name === partyName);
@@ -72,14 +75,9 @@ export default function SellingForm({ transaction, parties, onSubmit, isLoading 
     e.preventDefault();
     onSubmit({
       ...formData,
-      hny_rate: parseFloat(formData.hny_rate) || 0,
-      hny_weight: parseFloat(formData.hny_weight) || 0,
-      black_rate: parseFloat(formData.black_rate) || 0,
-      black_weight: parseFloat(formData.black_weight) || 0,
-      shoes_hny: parseFloat(formData.shoes_hny) || 0,
-      sheet_hny: parseFloat(formData.sheet_hny) || 0,
-      shoes_black: parseFloat(formData.shoes_black) || 0,
-      sheet_black: parseFloat(formData.sheet_black) || 0,
+      count: parseFloat(formData.count) || 0,
+      weight_per_item: parseFloat(formData.weight_per_item) || 0,
+      rate_per_item: parseFloat(formData.rate_per_item) || 0,
       total_weight: parseFloat(formData.total_weight) || 0,
       total_payment: parseFloat(formData.total_payment) || 0
     });
@@ -121,6 +119,7 @@ export default function SellingForm({ transaction, parties, onSubmit, isLoading 
                 value={formData.party_name}
                 onChange={(e) => setFormData({ ...formData, party_name: e.target.value })}
                 className="mt-2"
+                required
               />
             </div>
             <div>
@@ -130,150 +129,79 @@ export default function SellingForm({ transaction, parties, onSubmit, isLoading 
                 value={formData.phone}
                 onChange={(e) => setFormData({ ...formData, phone: e.target.value })}
                 className="mt-1"
+                required
               />
             </div>
+          </CardContent>
+        </Card>
+
+        {/* Item Details */}
+        <Card className="border-purple-200 bg-purple-50/30">
+          <CardHeader className="pb-4">
+            <CardTitle className="text-lg font-semibold text-purple-700">Item Details</CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-4">
             <div>
-              <Label className="text-slate-600">Item Name</Label>
+              <Label className="text-purple-600">Item Name</Label>
               <Select value={formData.item_name} onValueChange={(v) => setFormData({ ...formData, item_name: v })}>
-                <SelectTrigger className="mt-1">
+                <SelectTrigger className="mt-1 bg-white">
                   <SelectValue placeholder="Select item" />
                 </SelectTrigger>
                 <SelectContent>
-                  {BS_ITEMS.map(item => (
+                  {ITEM_NAMES.map(item => (
                     <SelectItem key={item} value={item}>{item}</SelectItem>
                   ))}
                 </SelectContent>
               </Select>
-            </div>
-          </CardContent>
-        </Card>
-
-        {/* Item Counts */}
-        <Card className="border-purple-200 bg-purple-50/30">
-          <CardHeader className="pb-4">
-            <CardTitle className="text-lg font-semibold text-purple-700 flex items-center gap-2">
-              <Package className="w-5 h-5" />
-              Item Counts
-            </CardTitle>
-          </CardHeader>
-          <CardContent className="space-y-4">
-            <div className="grid grid-cols-2 gap-4">
-              <div>
-                <Label className="text-amber-600">Shoes HNY</Label>
-                <Input
-                  type="number"
-                  placeholder="0"
-                  value={formData.shoes_hny}
-                  onChange={(e) => setFormData({ ...formData, shoes_hny: e.target.value })}
-                  className="mt-1 bg-white"
-                />
-              </div>
-              <div>
-                <Label className="text-amber-600">Sheet HNY</Label>
-                <Input
-                  type="number"
-                  placeholder="0"
-                  value={formData.sheet_hny}
-                  onChange={(e) => setFormData({ ...formData, sheet_hny: e.target.value })}
-                  className="mt-1 bg-white"
-                />
-              </div>
-              <div>
-                <Label className="text-slate-600">Shoes Black</Label>
-                <Input
-                  type="number"
-                  placeholder="0"
-                  value={formData.shoes_black}
-                  onChange={(e) => setFormData({ ...formData, shoes_black: e.target.value })}
-                  className="mt-1 bg-white"
-                />
-              </div>
-              <div>
-                <Label className="text-slate-600">Sheet Black</Label>
-                <Input
-                  type="number"
-                  placeholder="0"
-                  value={formData.sheet_black}
-                  onChange={(e) => setFormData({ ...formData, sheet_black: e.target.value })}
-                  className="mt-1 bg-white"
-                />
-              </div>
-            </div>
-          </CardContent>
-        </Card>
-
-        {/* HNY Color */}
-        <Card className="border-amber-200 bg-amber-50/30">
-          <CardHeader className="pb-4">
-            <CardTitle className="text-lg font-semibold text-amber-700">HNY (Color)</CardTitle>
-          </CardHeader>
-          <CardContent className="space-y-4">
-            <div>
-              <Label className="text-amber-600">Rate (₹/kg)</Label>
               <Input
-                type="number"
-                placeholder="Enter rate"
-                value={formData.hny_rate}
-                onChange={(e) => setFormData({ ...formData, hny_rate: e.target.value })}
-                className="mt-1 bg-white"
+                placeholder="Or enter new item name"
+                value={formData.item_name}
+                onChange={(e) => setFormData({ ...formData, item_name: e.target.value })}
+                className="mt-2 bg-white"
+                required
               />
             </div>
             <div>
-              <Label className="text-amber-600">Weight (kg)</Label>
+              <Label className="text-purple-600">Count (Number of Items)</Label>
               <Input
                 type="number"
-                placeholder="Enter weight"
-                value={formData.hny_weight}
-                onChange={(e) => setFormData({ ...formData, hny_weight: e.target.value })}
+                step="0.01"
+                placeholder="e.g., 50"
+                value={formData.count}
+                onChange={(e) => setFormData({ ...formData, count: e.target.value })}
                 className="mt-1 bg-white"
-              />
-            </div>
-            <div className="pt-2 border-t border-amber-200">
-              <p className="text-sm text-amber-600">Subtotal</p>
-              <p className="text-xl font-bold text-amber-700">
-                ₹{((parseFloat(formData.hny_rate) || 0) * (parseFloat(formData.hny_weight) || 0)).toLocaleString()}
-              </p>
-            </div>
-          </CardContent>
-        </Card>
-
-        {/* Black Color */}
-        <Card className="border-slate-300 bg-slate-50/50">
-          <CardHeader className="pb-4">
-            <CardTitle className="text-lg font-semibold text-slate-700">Black (Color)</CardTitle>
-          </CardHeader>
-          <CardContent className="space-y-4">
-            <div>
-              <Label className="text-slate-600">Rate (₹/kg)</Label>
-              <Input
-                type="number"
-                placeholder="Enter rate"
-                value={formData.black_rate}
-                onChange={(e) => setFormData({ ...formData, black_rate: e.target.value })}
-                className="mt-1 bg-white"
+                required
               />
             </div>
             <div>
-              <Label className="text-slate-600">Weight (kg)</Label>
+              <Label className="text-purple-600">Weight per Item (kg)</Label>
               <Input
                 type="number"
-                placeholder="Enter weight"
-                value={formData.black_weight}
-                onChange={(e) => setFormData({ ...formData, black_weight: e.target.value })}
+                step="0.01"
+                placeholder="e.g., 0.8"
+                value={formData.weight_per_item}
+                onChange={(e) => setFormData({ ...formData, weight_per_item: e.target.value })}
                 className="mt-1 bg-white"
+                required
               />
             </div>
-            <div className="pt-2 border-t border-slate-200">
-              <p className="text-sm text-slate-600">Subtotal</p>
-              <p className="text-xl font-bold text-slate-700">
-                ₹{((parseFloat(formData.black_rate) || 0) * (parseFloat(formData.black_weight) || 0)).toLocaleString()}
-              </p>
+            <div>
+              <Label className="text-purple-600">Rate (₹/item)</Label>
+              <Input
+                type="number"
+                step="0.01"
+                placeholder="e.g., 140"
+                value={formData.rate_per_item}
+                onChange={(e) => setFormData({ ...formData, rate_per_item: e.target.value })}
+                className="mt-1 bg-white"
+                required
+              />
             </div>
           </CardContent>
         </Card>
       </div>
 
-      {/* Totals */}
+      {/* Calculated Totals */}
       <Card className="border-green-200 bg-gradient-to-br from-green-50 to-emerald-50">
         <CardHeader className="pb-4">
           <CardTitle className="text-lg font-semibold text-green-700 flex items-center gap-2">
@@ -285,11 +213,17 @@ export default function SellingForm({ transaction, parties, onSubmit, isLoading 
           <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
             <div className="p-4 bg-white rounded-lg border border-green-100">
               <p className="text-sm text-green-600">Total Weight</p>
-              <p className="text-2xl font-bold text-green-700">{formData.total_weight} kg</p>
+              <p className="text-2xl font-bold text-green-700">{formData.total_weight.toFixed(2)} kg</p>
+              <p className="text-xs text-slate-500 mt-1">
+                {formData.count} × {formData.weight_per_item} kg
+              </p>
             </div>
             <div className="p-4 bg-white rounded-lg border border-green-100">
               <p className="text-sm text-green-600">Total Payment</p>
               <p className="text-2xl font-bold text-green-700">₹{formData.total_payment.toLocaleString()}</p>
+              <p className="text-xs text-slate-500 mt-1">
+                {formData.count} items × ₹{formData.rate_per_item}
+              </p>
             </div>
             <div className="p-4 bg-white rounded-lg border border-green-100">
               <Label className="text-slate-600 text-sm">Notes</Label>

@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { base44 } from '@/api/base44Client';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { toast } from 'sonner';
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
@@ -46,6 +47,10 @@ export default function Dashboard() {
       queryClient.invalidateQueries(['transactions']);
       setShowAddDialog(false);
       setEditingTransaction(null);
+      toast.success('Transaction created successfully!');
+    },
+    onError: (error) => {
+      toast.error(error.message || 'Failed to create transaction');
     },
   });
 
@@ -55,6 +60,10 @@ export default function Dashboard() {
       queryClient.invalidateQueries(['transactions']);
       setShowAddDialog(false);
       setEditingTransaction(null);
+      toast.success('Transaction updated successfully!');
+    },
+    onError: (error) => {
+      toast.error(error.message || 'Failed to update transaction');
     },
   });
 
@@ -63,6 +72,10 @@ export default function Dashboard() {
     onSuccess: () => {
       queryClient.invalidateQueries(['transactions']);
       setDeleteTransaction(null);
+      toast.success('Transaction deleted successfully!');
+    },
+    onError: (error) => {
+      toast.error(error.message || 'Failed to delete transaction');
     },
   });
 

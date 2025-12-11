@@ -3,7 +3,11 @@ const bodyParser = require('body-parser');
 const cors = require('cors');
 const multer = require('multer');
 const cloudinary = require('cloudinary').v2;
+const session = require('express-session');
+const passport = require('./config/passport');
+const jwt = require('jsonwebtoken');
 const { PrismaClient } = require('@prisma/client');
+const { authenticateToken, optionalAuth } = require('./middleware/auth');
 
 const prisma = new PrismaClient();
 const app = express();
@@ -18,8 +22,25 @@ cloudinary.config({
 // Multer memory storage for file uploads
 const upload = multer({ storage: multer.memoryStorage() });
 
-app.use(cors());
+// CORS configuration
+app.use(cors({
+  origin: process.env.FRONTEND_URL || 'http://localhost:5173',
+  credentials: true,
+}));
+
 app.use(bodyParser.json());
+
+// Session configuration
+app.use(session({
+  secret: process.env.SESSION_SECRET,
+  resave: false,
+  saveUninitialized: false,
+  cookie: { secure: false, maxAge: 24 * 60 * 60 * 1000 } // 24 hours
+}));
+
+// Initialize Passport
+app.use(passport.initialize());
+app.use(passport.session());
 
 // Helper: Upload image to Cloudinary
 async function uploadToCloudinary(file, folder) {
@@ -50,23 +71,64 @@ function mapTransaction(tx) {
     notes: tx.notes,
     invoice_image: tx.invoiceImage,
     receipt_image: tx.receiptImage,
-    created_by: tx.createdBy,
+    created_by: tx.creator?.email || tx.creator?.name || 'Unknown',
     created_date: tx.createdAt,
+    // For buying transactions, include rate and weight info from first buy item
+    hny_rate: tx.buyItems?.[0]?.hnyRate || 0,
+    hny_weight: tx.buyItems?.[0]?.hnyColor || 0,
+    black_rate: tx.buyItems?.[0]?.blackRate || 0,
+    black_weight: tx.buyItems?.[0]?.blackColor || 0,
     buy_items: tx.buyItems?.map(item => ({
       id: item.id,
       hny_color: item.hnyColor,
+      hny_rate: item.hnyRate,
       black_color: item.blackColor,
+      black_rate: item.blackRate,
     })) || [],
     sell_items: tx.sellItems?.map(item => ({
       id: item.id,
-      item_code: item.itemCode,
-      payment: item.payment,
-      shoes_hny: item.shoesHny,
-      sheet_hny: item.sheetHny,
-      shoes_black: item.shoesBlack,
-      sheet_black: item.sheetBlack,
+      item_name: item.itemName,
+      count: item.count,
+      weight_per_item: item.weightPerItem,
+      rate_per_item: item.ratePerItem,
+      total_weight: item.totalWeight,
+      total_amount: item.totalAmount,
     })) || [],
   };
+}
+
+// Notification helper - Store notifications in database for admin
+async function notifyAdmin(action, details, userId) {
+  try {
+    // Find all admin users
+    const admins = await prisma.user.findMany({
+      where: { role: 'admin' },
+      select: { id: true, email: true, name: true }
+    });
+
+    const user = await prisma.user.findUnique({
+      where: { id: userId },
+      select: { email: true, name: true }
+    });
+
+    const message = `${user?.name || user?.email || 'Unknown'} ${action} ${details}`;
+    
+    // Store notification for each admin
+    await Promise.all(admins.map(admin => 
+      prisma.notification.create({
+        data: {
+          userId: admin.id,
+          message,
+          type: action.includes('created') ? 'create' : action.includes('updated') ? 'update' : 'delete',
+          isRead: false,
+        }
+      }).catch(() => {}) // Ignore errors if notification table doesn't exist yet
+    ));
+
+    console.log(`[ADMIN NOTIFICATION] ${message}`);
+  } catch (error) {
+    console.error('Notification error:', error.message);
+  }
 }
 
 // ============ HEALTH CHECK ============
@@ -76,6 +138,122 @@ app.get('/api/health', async (req, res) => {
     res.json({ status: 'ok', database: 'connected' });
   } catch (err) {
     res.status(500).json({ status: 'error', database: 'disconnected', error: err.message });
+  }
+});
+
+// ============ AUTHENTICATION ROUTES ============
+// Google OAuth login
+app.get('/auth/google',
+  passport.authenticate('google', { scope: ['profile', 'email'] })
+);
+
+// Google OAuth callback
+app.get('/auth/google/callback',
+  passport.authenticate('google', { failureRedirect: process.env.FRONTEND_URL + '/login' }),
+  (req, res) => {
+    // Generate JWT token
+    const token = jwt.sign(
+      { id: req.user.id, email: req.user.email, role: req.user.role },
+      process.env.JWT_SECRET,
+      { expiresIn: '7d' }
+    );
+
+    // Redirect to frontend with token
+    res.redirect(`${process.env.FRONTEND_URL}/auth/callback?token=${token}`);
+  }
+);
+
+// Get current user info
+app.get('/api/auth/me', authenticateToken, async (req, res) => {
+  try {
+    const user = await prisma.user.findUnique({
+      where: { id: req.user.id },
+      select: { id: true, email: true, name: true, role: true, profileImage: true, isActive: true },
+    });
+    res.json(user);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Logout
+app.post('/api/auth/logout', (req, res) => {
+  req.logout(() => {
+    res.json({ message: 'Logged out successfully' });
+  });
+});
+
+// ============ NOTIFICATION ROUTES ============
+// Get notifications for current user (admin only)
+app.get('/api/notifications', authenticateToken, async (req, res) => {
+  try {
+    if (req.user.role !== 'admin') {
+      return res.json([]); // Non-admins get empty notifications
+    }
+
+    const notifications = await prisma.notification.findMany({
+      where: { userId: req.user.id },
+      orderBy: { createdAt: 'desc' },
+      take: 50, // Limit to last 50 notifications
+    });
+
+    res.json(notifications);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Mark notification as read
+app.put('/api/notifications/:id/read', authenticateToken, async (req, res) => {
+  try {
+    const notification = await prisma.notification.update({
+      where: { 
+        id: req.params.id,
+        userId: req.user.id, // Ensure user can only mark their own notifications
+      },
+      data: { isRead: true },
+    });
+
+    res.json(notification);
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+// Mark all notifications as read
+app.put('/api/notifications/mark-all-read', authenticateToken, async (req, res) => {
+  try {
+    await prisma.notification.updateMany({
+      where: { 
+        userId: req.user.id,
+        isRead: false,
+      },
+      data: { isRead: true },
+    });
+
+    res.json({ message: 'All notifications marked as read' });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Get unread notification count
+app.get('/api/notifications/unread-count', authenticateToken, async (req, res) => {
+  try {
+    if (req.user.role !== 'admin') {
+      return res.json({ count: 0 });
+    }
+
+    const count = await prisma.notification.count({
+      where: { 
+        userId: req.user.id,
+        isRead: false,
+      },
+    });
+
+    res.json({ count });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
   }
 });
 
@@ -115,7 +293,7 @@ app.get('/api/users/:id', async (req, res) => {
 });
 
 // ============ PARTY ROUTES ============
-app.get('/api/parties', async (req, res) => {
+app.get('/api/parties', authenticateToken, async (req, res) => {
   try {
     const parties = await prisma.party.findMany({
       orderBy: { createdAt: 'desc' },
@@ -139,7 +317,7 @@ app.get('/api/parties', async (req, res) => {
   }
 });
 
-app.post('/api/parties', upload.single('image'), async (req, res) => {
+app.post('/api/parties', authenticateToken, upload.single('image'), async (req, res) => {
   try {
     const { name, phone, email, address, notes, createdBy } = req.body;
     let image = null;
@@ -162,7 +340,7 @@ app.post('/api/parties', upload.single('image'), async (req, res) => {
   }
 });
 
-app.put('/api/parties/:id', upload.single('image'), async (req, res) => {
+app.put('/api/parties/:id', authenticateToken, upload.single('image'), async (req, res) => {
   try {
     const { name, phone, email, address, notes, isActive } = req.body;
     const data = { name, phone, email, address, notes };
@@ -183,7 +361,7 @@ app.put('/api/parties/:id', upload.single('image'), async (req, res) => {
   }
 });
 
-app.delete('/api/parties/:id', async (req, res) => {
+app.delete('/api/parties/:id', authenticateToken, async (req, res) => {
   try {
     await prisma.party.delete({ where: { id: req.params.id } });
     res.json({ success: true });
@@ -193,7 +371,7 @@ app.delete('/api/parties/:id', async (req, res) => {
 });
 
 // ============ TRANSACTION ROUTES ============
-app.get('/api/transactions', async (req, res) => {
+app.get('/api/transactions', authenticateToken, async (req, res) => {
   try {
     const { type, startDate, endDate, partyId } = req.query;
     const where = {};
@@ -212,6 +390,13 @@ app.get('/api/transactions', async (req, res) => {
         party: true,
         buyItems: true,
         sellItems: true,
+        creator: {
+          select: {
+            id: true,
+            email: true,
+            name: true,
+          }
+        },
       },
       orderBy: { createdAt: 'desc' },
     });
@@ -222,11 +407,22 @@ app.get('/api/transactions', async (req, res) => {
   }
 });
 
-app.get('/api/transactions/:id', async (req, res) => {
+app.get('/api/transactions/:id', authenticateToken, async (req, res) => {
   try {
     const transaction = await prisma.transaction.findUnique({
       where: { id: req.params.id },
-      include: { party: true, buyItems: true, sellItems: true },
+      include: { 
+        party: true, 
+        buyItems: true, 
+        sellItems: true,
+        creator: {
+          select: {
+            id: true,
+            email: true,
+            name: true,
+          }
+        },
+      },
     });
     
     if (!transaction) return res.status(404).json({ error: 'Transaction not found' });
@@ -236,7 +432,7 @@ app.get('/api/transactions/:id', async (req, res) => {
   }
 });
 
-app.post('/api/transactions', upload.fields([
+app.post('/api/transactions', authenticateToken, upload.fields([
   { name: 'invoiceImage', maxCount: 1 },
   { name: 'receiptImage', maxCount: 1 }
 ]), async (req, res) => {
@@ -263,9 +459,6 @@ app.post('/api/transactions', upload.fields([
       if (existingParty) {
         partyId = existingParty.id;
       } else {
-        const userId = (await prisma.user.findFirst())?.id;
-        if (!userId) return res.status(400).json({ error: 'No user found. Create a user first.' });
-        
         const newParty = await prisma.party.create({
           data: {
             name: data.party_name || 'Unknown',
@@ -273,7 +466,7 @@ app.post('/api/transactions', upload.fields([
             email: data.email,
             address: data.address,
             notes: data.notes,
-            createdBy: userId,
+            createdBy: req.user.id, // Use authenticated user
           }
         });
         partyId = newParty.id;
@@ -289,10 +482,6 @@ app.post('/api/transactions', upload.fields([
       receiptImage = await uploadToCloudinary(req.files.receiptImage[0], 'receipts');
     }
     
-    // Get user
-    const userId = (await prisma.user.findFirst())?.id;
-    if (!userId) return res.status(400).json({ error: 'No user found. Create a user first.' });
-    
     // Create transaction with items
     const transaction = await prisma.transaction.create({
       data: {
@@ -305,26 +494,46 @@ app.post('/api/transactions', upload.fields([
         notes: data.notes,
         invoiceImage,
         receiptImage,
-        createdBy: userId,
-        buyItems: type === 'buy' && data.buy_items ? {
-          create: data.buy_items.map(item => ({
-            hnyColor: parseFloat(item.hny_color || 0),
-            blackColor: parseFloat(item.black_color || 0),
-          }))
+        createdBy: req.user.id, // Use authenticated user
+        buyItems: type === 'buy' ? {
+          create: [{
+            hnyColor: parseFloat(data.hny_weight || 0),
+            hnyRate: parseFloat(data.hny_rate || 0),
+            blackColor: parseFloat(data.black_weight || 0),
+            blackRate: parseFloat(data.black_rate || 0),
+          }]
         } : undefined,
-        sellItems: type === 'sell' && data.sell_items ? {
-          create: data.sell_items.map(item => ({
-            itemCode: item.item_code,
-            payment: parseFloat(item.payment),
-            shoesHny: parseFloat(item.shoes_hny || 0),
-            sheetHny: parseFloat(item.sheet_hny || 0),
-            shoesBlack: parseFloat(item.shoes_black || 0),
-            sheetBlack: parseFloat(item.sheet_black || 0),
-          }))
+        sellItems: type === 'sell' ? {
+          create: [{
+            itemName: data.item_name,
+            count: parseFloat(data.count || 0),
+            weightPerItem: parseFloat(data.weight_per_item || 0),
+            ratePerItem: parseFloat(data.rate_per_item || 0),
+            totalWeight: parseFloat(data.total_weight || 0),
+            totalAmount: parseFloat(data.total_payment || 0),
+          }]
         } : undefined,
       },
-      include: { party: true, buyItems: true, sellItems: true },
+      include: { 
+        party: true, 
+        buyItems: true, 
+        sellItems: true,
+        creator: {
+          select: {
+            id: true,
+            email: true,
+            name: true,
+          }
+        },
+      },
     });
+    
+    // Notify admins about new transaction
+    await notifyAdmin(
+      'created',
+      `a ${type} transaction for ${transaction.party?.name || 'Unknown'} (₹${transaction.totalPayment})`,
+      req.user.id
+    );
     
     res.json(mapTransaction(transaction));
   } catch (err) {
@@ -332,11 +541,25 @@ app.post('/api/transactions', upload.fields([
   }
 });
 
-app.put('/api/transactions/:id', upload.fields([
+app.put('/api/transactions/:id', authenticateToken, upload.fields([
   { name: 'invoiceImage', maxCount: 1 },
   { name: 'receiptImage', maxCount: 1 }
 ]), async (req, res) => {
   try {
+    // Check ownership - only creator or admin can update
+    const existing = await prisma.transaction.findUnique({
+      where: { id: req.params.id },
+      select: { createdBy: true, party: { select: { name: true } }, totalPayment: true, type: true }
+    });
+
+    if (!existing) {
+      return res.status(404).json({ error: 'Transaction not found' });
+    }
+
+    if (existing.createdBy !== req.user.id && req.user.role !== 'admin') {
+      return res.status(403).json({ error: 'You can only edit your own transactions' });
+    }
+
     const data = req.body;
     const updateData = {
       date: data.date ? new Date(data.date) : undefined,
@@ -360,8 +583,28 @@ app.put('/api/transactions/:id', upload.fields([
     const transaction = await prisma.transaction.update({
       where: { id: req.params.id },
       data: updateData,
-      include: { party: true, buyItems: true, sellItems: true },
+      include: { 
+        party: true, 
+        buyItems: true, 
+        sellItems: true,
+        creator: {
+          select: {
+            id: true,
+            email: true,
+            name: true,
+          }
+        },
+      },
     });
+    
+    // Notify admins about transaction update (only if not updated by admin)
+    if (req.user.role !== 'admin') {
+      await notifyAdmin(
+        'updated',
+        `a transaction for ${transaction.party?.name || 'Unknown'} (₹${transaction.totalPayment})`,
+        req.user.id
+      );
+    }
     
     res.json(mapTransaction(transaction));
   } catch (err) {
@@ -369,9 +612,32 @@ app.put('/api/transactions/:id', upload.fields([
   }
 });
 
-app.delete('/api/transactions/:id', async (req, res) => {
+app.delete('/api/transactions/:id', authenticateToken, async (req, res) => {
   try {
+    // Check ownership - only creator or admin can delete
+    const existing = await prisma.transaction.findUnique({
+      where: { id: req.params.id },
+      select: { createdBy: true, party: { select: { name: true } }, totalPayment: true, type: true }
+    });
+
+    if (!existing) {
+      return res.status(404).json({ error: 'Transaction not found' });
+    }
+
+    if (existing.createdBy !== req.user.id && req.user.role !== 'admin') {
+      return res.status(403).json({ error: 'You can only delete your own transactions' });
+    }
+
     await prisma.transaction.delete({ where: { id: req.params.id } });
+    
+    // Notify admins about transaction deletion (only if not deleted by admin)
+    if (req.user.role !== 'admin') {
+      await notifyAdmin(
+        'deleted',
+        `a ${existing.type} transaction for ${existing.party?.name || 'Unknown'} (₹${existing.totalPayment})`,
+        req.user.id
+      );
+    }
     res.json({ success: true });
   } catch (err) {
     res.status(400).json({ error: err.message });
@@ -379,7 +645,7 @@ app.delete('/api/transactions/:id', async (req, res) => {
 });
 
 // ============ REPORTS ============
-app.get('/api/reports/summary', async (req, res) => {
+app.get('/api/reports/summary', authenticateToken, async (req, res) => {
   try {
     const { type, startDate, endDate } = req.query;
     const where = {};
@@ -420,7 +686,7 @@ app.get('/api/reports/summary', async (req, res) => {
   }
 });
 
-app.post('/api/reports/generate', async (req, res) => {
+app.post('/api/reports/generate', authenticateToken, async (req, res) => {
   try {
     const { name, type, startDate, endDate, generatedBy } = req.body;
     
@@ -450,7 +716,7 @@ app.post('/api/reports/generate', async (req, res) => {
   }
 });
 
-app.get('/api/reports', async (req, res) => {
+app.get('/api/reports', authenticateToken, async (req, res) => {
   try {
     const reports = await prisma.report.findMany({
       orderBy: { createdAt: 'desc' },
@@ -463,7 +729,7 @@ app.get('/api/reports', async (req, res) => {
 });
 
 // ============ EXPORT CSV ============
-app.get('/api/export', async (req, res) => {
+app.get('/api/export', authenticateToken, async (req, res) => {
   try {
     const transactions = await prisma.transaction.findMany({
       include: { party: true },

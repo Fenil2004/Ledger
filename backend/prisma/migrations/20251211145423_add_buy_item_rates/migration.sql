@@ -1,0 +1,3 @@
+-- AlterTable
+ALTER TABLE "BuyItem" ADD COLUMN     "blackRate" DOUBLE PRECISION,
+ADD COLUMN     "hnyRate" DOUBLE PRECISION;

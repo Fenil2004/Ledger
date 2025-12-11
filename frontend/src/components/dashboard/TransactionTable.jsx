@@ -67,6 +67,7 @@ export default function TransactionTable({ transactions, onEdit, onDelete, showU
                 </div>
               </TableHead>
               <TableHead className="font-semibold text-slate-700">Phone</TableHead>
+              <TableHead className="font-semibold text-slate-700">Item Details</TableHead>
               <TableHead className="font-semibold text-slate-700">HNY</TableHead>
               <TableHead className="font-semibold text-slate-700">Black</TableHead>
               <TableHead 
@@ -96,7 +97,7 @@ export default function TransactionTable({ transactions, onEdit, onDelete, showU
             <AnimatePresence>
               {sortedTransactions.length === 0 ? (
                 <TableRow>
-                  <TableCell colSpan={showUser ? 11 : 10} className="text-center py-12 text-slate-500">
+                  <TableCell colSpan={showUser ? 12 : 11} className="text-center py-12 text-slate-500">
                     No transactions found
                   </TableCell>
                 </TableRow>
@@ -127,19 +128,45 @@ export default function TransactionTable({ transactions, onEdit, onDelete, showU
                     <TableCell className="font-medium">{transaction.party_name || '-'}</TableCell>
                     <TableCell className="text-slate-600">{transaction.phone || '-'}</TableCell>
                     <TableCell>
-                      <div className="text-xs space-y-0.5">
-                        <div className="text-amber-600">R: ₹{transaction.hny_rate || 0}</div>
-                        <div className="text-slate-600">W: {transaction.hny_weight || 0}kg</div>
-                      </div>
+                      {transaction.transaction_type === 'selling' && transaction.sell_items?.[0] ? (
+                        <div className="text-xs space-y-0.5">
+                          <div className="font-medium text-purple-700">{transaction.sell_items[0].item_name}</div>
+                          <div className="text-slate-600">Qty: {transaction.sell_items[0].count} × ₹{transaction.sell_items[0].rate_per_item}/item</div>
+                          <div className="text-slate-500">{transaction.sell_items[0].weight_per_item}kg/item</div>
+                        </div>
+                      ) : (
+                        <span className="text-slate-400 text-xs">-</span>
+                      )}
                     </TableCell>
                     <TableCell>
-                      <div className="text-xs space-y-0.5">
-                        <div className="text-slate-800">R: ₹{transaction.black_rate || 0}</div>
-                        <div className="text-slate-600">W: {transaction.black_weight || 0}kg</div>
-                      </div>
+                      {transaction.transaction_type === 'buying' ? (
+                        <div className="text-xs space-y-0.5">
+                          <div className="text-amber-600">R: ₹{transaction.hny_rate || 0}</div>
+                          <div className="text-slate-600">W: {transaction.hny_weight || 0}kg</div>
+                        </div>
+                      ) : (
+                        <span className="text-slate-400 text-xs">-</span>
+                      )}
+                    </TableCell>
+                    <TableCell>
+                      {transaction.transaction_type === 'buying' ? (
+                        <div className="text-xs space-y-0.5">
+                          <div className="text-slate-800">R: ₹{transaction.black_rate || 0}</div>
+                          <div className="text-slate-600">W: {transaction.black_weight || 0}kg</div>
+                        </div>
+                      ) : (
+                        <span className="text-slate-400 text-xs">-</span>
+                      )}
                     </TableCell>
                     <TableCell className="font-semibold text-indigo-600">
-                      {transaction.total_weight || 0} kg
+                      {transaction.transaction_type === 'selling' && transaction.sell_items?.[0] ? (
+                        <div className="text-xs">
+                          <div className="font-bold text-indigo-600">{transaction.total_weight || 0} kg</div>
+                          <div className="text-slate-500">({transaction.sell_items[0].count} × {transaction.sell_items[0].weight_per_item})</div>
+                        </div>
+                      ) : (
+                        <div>{transaction.total_weight || 0} kg</div>
+                      )}
                     </TableCell>
                     <TableCell className="font-bold text-slate-800">
                       ₹{(transaction.total_payment || 0).toLocaleString()}
