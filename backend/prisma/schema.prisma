@@ -1,0 +1,132 @@
+// Prisma Schema for Ledger Application
+// Database: PostgreSQL (Neon serverless)
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// User model - stores application users with profile images
+model User {
+  id           String        @id @default(cuid())
+  email        String        @unique
+  name         String
+  password     String
+  role         String        @default("user") // 'admin' or 'user'
+  profileImage String?       // Cloudinary URL
+  isActive     Boolean       @default(true)
+  createdAt    DateTime      @default(now())
+  updatedAt    DateTime      @updatedAt
+  
+  // Relations
+  transactions Transaction[]
+  parties      Party[]       @relation("CreatedParties")
+  
+  @@index([email])
+}
+
+// Party model - customers/vendors with contact info and images
+model Party {
+  id          String        @id @default(cuid())
+  name        String
+  phone       String
+  email       String?
+  address     String?
+  notes       String?
+  image       String?       // Cloudinary URL for party photo/logo
+  isActive    Boolean       @default(true)
+  createdAt   DateTime      @default(now())
+  updatedAt   DateTime      @updatedAt
+  
+  // Relations
+  createdBy   String
+  creator     User          @relation("CreatedParties", fields: [createdBy], references: [id])
+  transactions Transaction[]
+  
+  @@index([phone])
+  @@index([name])
+  @@index([createdBy])
+}
+
+// Transaction model - buy/sell transactions with daily tracking
+model Transaction {
+  id            String        @id @default(cuid())
+  type          String        // 'buy' or 'sell'
+  date          DateTime      // Transaction date for daily/monthly/quarterly/yearly filtering
+  partyId       String
+  phone         String
+  totalWeight   Float
+  totalPayment  Float
+  notes         String?
+  
+  // Image attachments (invoices, receipts, etc.)
+  invoiceImage  String?       // Cloudinary URL
+  receiptImage  String?       // Cloudinary URL
+  
+  createdAt     DateTime      @default(now())
+  updatedAt     DateTime      @updatedAt
+  
+  // Relations
+  createdBy     String
+  creator       User          @relation(fields: [createdBy], references: [id])
+  party         Party         @relation(fields: [partyId], references: [id])
+  buyItems      BuyItem[]
+  sellItems     SellItem[]
+  
+  @@index([type])
+  @@index([date])
+  @@index([partyId])
+  @@index([createdBy])
+  @@index([createdAt])
+}
+
+// BuyItem model - items purchased in buying transactions
+model BuyItem {
+  id             String        @id @default(cuid())
+  transactionId  String
+  hnyColor       Float         // Honey color quantity
+  blackColor     Float         // Black color quantity
+  createdAt      DateTime      @default(now())
+  
+  // Relations
+  transaction    Transaction   @relation(fields: [transactionId], references: [id], onDelete: Cascade)
+  
+  @@index([transactionId])
+}
+
+// SellItem model - items sold in selling transactions
+model SellItem {
+  id             String        @id @default(cuid())
+  transactionId  String
+  itemCode       String
+  payment        Float
+  shoesHny       Float         // Shoes honey quantity
+  sheetHny       Float         // Sheet honey quantity
+  shoesBlack     Float         // Shoes black quantity
+  sheetBlack     Float         // Sheet black quantity
+  createdAt      DateTime      @default(now())
+  
+  // Relations
+  transaction    Transaction   @relation(fields: [transactionId], references: [id], onDelete: Cascade)
+  
+  @@index([transactionId])
+}
+
+// Report model - for storing generated reports
+model Report {
+  id             String        @id @default(cuid())
+  name           String
+  type           String        // 'daily', 'monthly', 'quarterly', 'yearly', 'custom'
+  startDate      DateTime
+  endDate        DateTime
+  data           Json          // Store report data as JSON
+  generatedBy    String
+  createdAt      DateTime      @default(now())
+  
+  @@index([type])
+  @@index([createdAt])
+}
